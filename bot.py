@@ -3,9 +3,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import os
 
-# Load environment variables (for securely storing the bot token in a .env file)
+# Load environment variables from .env file
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Configure the bot with required intents
 intents = discord.Intents.default()
@@ -13,6 +12,11 @@ intents.members = True  # For member-related events
 intents.message_content = True  # For reading message content (commands, manual responses, etc.)
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
+    print('------')
 
 # --------------------------------------------------------------------
 # DATA (Enhancement levels and gear information)
@@ -33,19 +37,13 @@ ENHANCEMENT_DATA = {
 ACCESSORY_NAMES = ["Necklace", "Belt", "Ring 1", "Ring 2", "Earring 1", "Earring 2"]
 
 # --------------------------------------------------------------------
-# SETTINGS (Streamer's Discord User ID and Announcement Channel)
-# --------------------------------------------------------------------
-STREAMER_USER_ID = 163006577693949952  # Replace with actual streamer's Discord user ID
+STREAMER_USER_ID = os.getenv("STREAMER_USER_ID")
 
-# --------------------------------------------------------------------
-# 1. ON READY EVENT (Bot startup confirmation)
 # --------------------------------------------------------------------
 @bot.event
 async def on_ready():
     print(f"[DEBUG] Bot is online and connected as: {bot.user}")
 
-# --------------------------------------------------------------------
-# 2. GREETING NEW MEMBERS
 # --------------------------------------------------------------------
 @bot.event
 async def on_member_join(member):
@@ -53,17 +51,12 @@ async def on_member_join(member):
     if channel:
         await channel.send(f"🎉 {member.mention}, welcome to the server! 🎮")
 
-# --------------------------------------------------------------------
-# 3. GOING LIVE NOTIFICATION
+
 # --------------------------------------------------------------------
 @bot.command()
-async def goinglive(ctx, *, announcement: str = "@everyone I'm live now! Come watch: https://www.twitch.tv/example"):
-    """
-    Notify members that the streamer is live on a specific channel.
-    """
-    print(f"[DEBUG] Going live command invoked by: {ctx.author.name} (ID: {ctx.author.id})")
-
-    if ctx.author.id != 163006577693949952:
+async def goinglive(ctx, announcement: str = None):
+    """Announces that the user is going live."""
+    if str(ctx.author.id) != STREAMER_USER_ID:
         await ctx.send("❌ You are not authorized to use this command.")
         print(f"[DEBUG] Unauthorized user attempted to use !goinglive: {ctx.author.name}")
         return
@@ -76,8 +69,6 @@ async def goinglive(ctx, *, announcement: str = "@everyone I'm live now! Come wa
         await ctx.send("❌ Announcements channel not found. Please create a channel named 'announcements'.")
 
 # --------------------------------------------------------------------
-# 4. SHOUT-OUT COMMAND
-# --------------------------------------------------------------------
 @bot.command()
 async def shoutout(ctx, streamer: str = None):
     """Shoutsout selected user and their Twitch."""
@@ -87,7 +78,16 @@ async def shoutout(ctx, streamer: str = None):
         await ctx.send(f"🎙️ Big shoutout to @{streamer}! https://www.twitch.tv/{streamer} Check them out and give them some love! 💖")
 
 # --------------------------------------------------------------------
-# 5. USEFUL RESOURCES COMMAND
+@bot.command()
+async def choicecommands(ctx):
+    """Lists all available commands."""
+    commands_list = """
+    **Available Commands:**
+    2. `!shoutout [streamer]` - Shouts out the selected user and their Twitch.
+    3. `!resources` - Shows all the best websites for BDO.
+    4. `!upgrade` - Calculate the next upgrades and associated costs for gear levels.
+    """
+    await ctx.send(commands_list)
 # --------------------------------------------------------------------
 @bot.command()
 async def resources(ctx):
@@ -95,15 +95,11 @@ async def resources(ctx):
     bdo_resources = """
 📚 **Black Desert Online Resources**:
 - [BDO Planner](https://bdoplanner.com/) - Gear and builds planner.
-- [Garmoth.com](https://garmoth.com/) - Boss timers, node wars, horse breeds, and more.
-- [Grumpy Green](https://grumpygreen.cricket/) - Life skilling and beginner guides.
-- [BDO Codex](https://bdocodex.com/) - Item, quest, and NPC database.
-Happy grinding, adventurer! 🎮
+- [Garmoth.com](https://garmoth.com/) - Boss timers, market prices, and more.
+- [BDO Nexus](https://bdo.altarofgaming.com/) - News, guides, and updates.
 """
     await ctx.send(bdo_resources)
 
-# --------------------------------------------------------------------
-# 6. GEAR UPGRADE PLANNER COMMAND
 # --------------------------------------------------------------------
 @bot.command()
 async def upgrade(ctx):
@@ -125,79 +121,57 @@ async def upgrade(ctx):
         gear_levels = list(map(int, msg.content.split()))
 
         if len(gear_levels) != 6:
-            await ctx.send("❌ Please provide exactly 6 gear enhancement levels!")
+            await ctx.send("❌ Please provide exactly 6 gear levels.")
             return
 
-        await ctx.send("Are you using **Kharazad** or **Distortion** earrings? Reply with `Kharazad` or `Distortion`.")
-        msg = await bot.wait_for("message", check=check, timeout=60)
-        earring_type = msg.content.lower()
+        upgrade_info = []
+        total_cron_cost = 0
+        total_agris_essence = 0
 
-        if earring_type not in ["kharazad", "distortion"]:
-            await ctx.send("❌ Invalid earring type! Provide either `Kharazad` or `Distortion`.")
-            return
+        for i, level in enumerate(gear_levels):
+            if level < 0 or level >= len(ENHANCEMENT_DATA):
+                await ctx.send(f"❌ Invalid gear level: {level}. Please provide levels between 0 and {len(ENHANCEMENT_DATA) - 1}.")
+                return
 
-        upgrade_plan = []
-        for idx, level in enumerate(gear_levels):
             next_level = level + 1
-            if next_level in ENHANCEMENT_DATA:
-                upgrade_detail = ENHANCEMENT_DATA[next_level]
-                upgrade_plan.append({
-                    "gear": ACCESSORY_NAMES[idx],
-                    "upgrade": upgrade_detail["level_name"],
-                    "cron_cost": upgrade_detail["cron_cost"],
-                    "base_rate": upgrade_detail["base_rate"],
+            if next_level < len(ENHANCEMENT_DATA):
+                data = ENHANCEMENT_DATA[next_level]
+                upgrade_info.append({
+                    "accessory": ACCESSORY_NAMES[i],
+                    "current_level": ENHANCEMENT_DATA[level]['level_name'],
+                    "next_level": data['level_name'],
+                    "base_rate": data['base_rate'],
+                    "additional_chance": data['additional_chance'],
+                    "cron_cost": data['cron_cost'],
+                    "agris_essence": data['agris_essence'],
+                    "total_cost": data['cron_cost'] + data['agris_essence']
                 })
+                total_cron_cost += data['cron_cost']
+                total_agris_essence += data['agris_essence']
 
-        upgrade_plan = sorted(upgrade_plan, key=lambda x: x["cron_cost"])
-        response = "**Your next 3 cheapest upgrades:**\n"
+        # Sort upgrades by total cost (Cron Cost + Agris Essence)
+        upgrade_info.sort(key=lambda x: x['total_cost'])
 
-        total_cost = 0
-        for i, upgrade in enumerate(upgrade_plan[:3], start=1):
-            cost = upgrade["cron_cost"] * 1000000
-            total_cost += cost
-            response += (
-                f"**{i}. {upgrade['gear']}**:\n"
-                f"- Upgrade: {upgrade['upgrade']}\n"
-                f"- Cron Stone Cost: {cost:,} silver\n"
-                f"- Base Success Rate: {upgrade['base_rate']}%\n"
-            )
-        response += f"\n**Total Estimated Cost: {total_cost:,} silver**"
-        await ctx.send(response)
+        # Get the top 3 cheapest upgrades
+        cheapest_upgrades = upgrade_info[:3]
 
-    except ValueError:
-        await ctx.send("❌ Invalid input! Use numeric values like `0 2 1 3 4 5`.")
+        # Calculate total silver and hours (assuming some conversion rates)
+        total_silver = total_cron_cost * 1,000,000  # Example conversion rate
+        total_hours = total_agris_essence * 0.5  # Example conversion rate
+
+        upgrade_message = "\n".join([
+            f"1. {upgrade['accessory']}: {upgrade['current_level']} → {upgrade['next_level']} "
+            f"(Base Rate: {upgrade['base_rate']}%, "
+            f"Cron Cost: {upgrade['cron_cost']}, Agris Essence: {upgrade['agris_essence']})"
+            for upgrade in cheapest_upgrades
+        ])
+        upgrade_message += f"\n\nTotal Silver: {total_silver} silver\nTotal Hours: {total_hours} hours"
+
+        await ctx.send(f"🔧 **Upgrade Information**:\n{upgrade_message}")
+
     except Exception as e:
-        await ctx.send("❌ An error occurred. Please try again.")
+        await ctx.send("❌ An error occurred while processing your request.")
         print(f"[ERROR] {e}")
 
-# --------------------------------------------------------------------
-# 7. COMMAND LIST (SHOW ALL BOT COMMANDS)
-# --------------------------------------------------------------------
-@bot.command()
-async def commands(ctx):
-    """List all available bot commands."""
-    commands_list = "\n".join(
-        [f"• **!{cmd.name}** - {cmd.help}" for cmd in bot.commands if not cmd.hidden]
-    )
-    await ctx.send(f"**Available Commands:**\n{commands_list}")
-
-# --------------------------------------------------------------------
-# 8. ERROR HANDLING
-# --------------------------------------------------------------------
-@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ You do not have permission to use this command.")
-    elif isinstance(error, commands.CommandNotFound):
-        await ctx.send("❓ Command not found. Use `!commands` to see available commands.")
-    else:
-        await ctx.send("⚙️ An internal error occurred. Please try again later.")
-        print(f"[ERROR] {error}")
-
-# --------------------------------------------------------------------
-# Start the bot
-# --------------------------------------------------------------------
-if TOKEN is None:
-    print("[ERROR] Bot token is missing. Please check your .env file.")
-else:
-    bot.run(TOKEN)
+# Run the bot with the token from the .env file
+bot.run(os.getenv("DISCORD_TOKEN"))
